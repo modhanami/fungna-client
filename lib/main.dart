@@ -1,11 +1,7 @@
-import 'dart:io';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'package:http/http.dart' as http;
-import 'package:network_info_plus/network_info_plus.dart';
 import 'package:flutter/foundation.dart' as Foundation;
 
 void main() {
@@ -83,10 +79,10 @@ class _MyHomePageState extends State<MyHomePage> {
         // Android emulator
         serverHost = 'http://10.0.2.2:3033';
       }
-    } else {
-      _socket = IO.io(serverHost, socketOptions);
-      debugPrint('connecting to $serverHost');
     }
+
+    _socket = IO.io(serverHost, socketOptions);
+    debugPrint('connecting to $serverHost');
 
     _socket.onConnect((_) {
       debugPrint('connected to server');
