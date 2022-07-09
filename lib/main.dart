@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
@@ -54,18 +53,28 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
-  late IO.Socket _socket;
-  late RTCPeerConnection pc;
+  IO.Socket? _socket;
+  RTCPeerConnection? pc;
   final _localRenderer = RTCVideoRenderer();
-  bool connected = false;
+  bool audioConnected = false;
+  bool socketConnected = false;
+  bool socketConnecting = false;
   late String serverHost;
 
   void requestAudio() {
-    _socket.emit('message', {'type': 'ready'});
+    _socket!.emit('message', {'type': 'ready'});
     debugPrint('requested audio');
   }
 
-  void connect() {
+  void handleConnectSocket() {
+    if (socketConnecting) {
+      return;
+    }
+
+    setState(() {
+      socketConnecting = true;
+    });
+
     if (Foundation.kReleaseMode && serverHost.trim().isEmpty) {
       debugPrint('no server host');
       return;
@@ -74,23 +83,26 @@ class _MyHomePageState extends State<MyHomePage> {
     var socketOptions = IO.OptionBuilder().setTransports(['websocket']).build();
     if (Foundation.kDebugMode) {
       if (Foundation.kIsWeb) {
-        serverHost = 'http://localhost:3033';
+        serverHost = 'http://localhost:30033';
       } else {
-        // Android emulator
-        serverHost = 'http://10.0.2.2:3033';
+        // Android emulator (must be commented out when debugging on real device)
+        serverHost = 'http://10.0.2.2:30033';
       }
     }
 
     _socket = IO.io(serverHost, socketOptions);
+    _socket!.connect();
     debugPrint('connecting to $serverHost');
 
-    _socket.onConnect((_) {
+    _socket!.onConnect((_) {
       debugPrint('connected to server');
+      setState(() {
+        socketConnected = true;
+        socketConnecting = false;
+      });
     });
 
-    _socket.onDisconnect((_) => debugPrint('disconnected'));
-
-    _socket.on("message", (data) async {
+    _socket!.on("message", (data) async {
       var payload = data["payload"];
 
       if (data["type"] == "offer") {
@@ -104,20 +116,30 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  void handleConnect() {
+  void handleDisconnectSocket() {
+    handleHangup();
+    _socket!.dispose();
+    _socket = null;
+    setState(() {
+      socketConnected = false;
+    });
+    debugPrint('disconnected');
+  }
+
+  void handleRequestAudio() {
     requestAudio();
 
     setState(() {
-      connected = true;
+      audioConnected = true;
     });
   }
 
-  void disconnect() {
+  void handleHangup() {
     _localRenderer.srcObject = null;
-    pc.close();
+    pc?.close();
 
     setState(() {
-      connected = false;
+      audioConnected = false;
     });
   }
 
@@ -125,42 +147,42 @@ class _MyHomePageState extends State<MyHomePage> {
     debugPrint('handle offer');
     pc = await createPeerConnection({});
 
-    pc.onAddStream = (stream) {
+    pc!.onAddStream = (stream) {
       debugPrint('received stream $stream');
       _localRenderer.srcObject = stream;
 
       setState(() {
-        connected = true;
+        audioConnected = true;
       });
     };
 
-    pc.onIceCandidate = (candidate) {
-      _socket.emit('message', {
+    pc!.onIceCandidate = (candidate) {
+      _socket!.emit('message', {
         'type': 'candidate',
         'payload': candidate.toMap(),
       });
     };
 
-    pc.onConnectionState = (state) {
+    pc!.onConnectionState = (state) {
       debugPrint('connection state $state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         setState(() {
-          connected = true;
+          audioConnected = true;
         });
       }
     };
 
-    await pc.setRemoteDescription(offer);
+    await pc!.setRemoteDescription(offer);
 
-    final answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
+    final answer = await pc!.createAnswer();
+    await pc!.setLocalDescription(answer);
 
-    _socket.emit("message", {'type': 'answer', 'payload': answer.toMap()});
+    _socket!.emit("message", {'type': 'answer', 'payload': answer.toMap()});
   }
 
   void handleCandidate(candidate) async {
     try {
-      await pc.addCandidate(candidate);
+      await pc!.addCandidate(candidate);
     } catch (e) {}
   }
 
@@ -172,7 +194,6 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     initRenderers();
-    connect();
   }
 
   void _incrementCounter() {
@@ -220,6 +241,9 @@ class _MyHomePageState extends State<MyHomePage> {
           // horizontal).
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
+            Text(
+              socketConnected ? 'connected' : 'not connected',
+            ),
             const Text(
               'You have daaa the button this many times:',
             ),
@@ -227,20 +251,40 @@ class _MyHomePageState extends State<MyHomePage> {
               '$_counter',
               style: Theme.of(context).textTheme.headline4,
             ),
-            ElevatedButton(
-              onPressed: connected ? disconnect : handleConnect,
-              child: Text(connected ? 'Disconnect' : 'Connect'),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: socketConnected
+                      ? handleDisconnectSocket
+                      : handleConnectSocket,
+                  child: Text(socketConnected ? 'Disconnect' : 'Connect'),
+                ),
+                ElevatedButton(
+                  onPressed: socketConnected
+                      ? audioConnected
+                          ? handleHangup
+                          : handleRequestAudio
+                      : null,
+                  child: Text(socketConnected && audioConnected
+                      ? 'Hangup'
+                      : 'Request Audio'),
+                ),
+              ],
             ),
-            Text(connected ? 'Playing' : 'Not Playing'),
+            Text(audioConnected ? 'Playing' : 'Not Playing'),
             //  Server host text input
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Server Host',
+            FractionallySizedBox(
+              widthFactor: .8,
+              child: TextField(
+                decoration: const InputDecoration(
+                  labelText: 'Server Host',
+                ),
+                onChanged: (text) {
+                  serverHost = text;
+                },
               ),
-              onChanged: (text) {
-                serverHost = text;
-              },
-            ),
+            )
           ],
         ),
       ),
